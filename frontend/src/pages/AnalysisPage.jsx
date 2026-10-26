@@ -357,15 +357,15 @@ export default function AnalysisPage() {
               <p className="text-xs text-slate-400 font-semibold uppercase mb-2">Model Scores</p>
               <div className="space-y-1.5">
                 <div className="flex justify-between text-xs">
-                  <span className="text-slate-400">Isolation Forest</span>
+                  <span className="text-slate-400">Isolation Forest (anomaly signal)</span>
                   <span className="text-sky-400 font-bold">{selectedTx.isolationForestScore?.toFixed(1)}/100</span>
                 </div>
                 <div className="flex justify-between text-xs">
-                  <span className="text-slate-400">Autoencoder</span>
+                  <span className="text-slate-400">Autoencoder (anomaly signal)</span>
                   <span className="text-purple-400 font-bold">{selectedTx.autoencoderScore?.toFixed(1)}/100</span>
                 </div>
                 <div className="flex justify-between text-xs border-t border-slate-700 pt-1.5 mt-1.5">
-                  <span className="text-slate-300 font-semibold">Ensemble Score</span>
+                  <span className="text-slate-300 font-semibold">Risk Score (XGBoost + AE model)</span>
                   <span className="text-white font-bold">{selectedTx.riskScore?.toFixed(1)}/100</span>
                 </div>
               </div>

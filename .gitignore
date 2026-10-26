@@ -8,9 +8,8 @@ HI-Small_Trans.csv
 **/HI-Small_Trans.csv
 *.csv.zip
 
-# ── Large preprocessed arrays (regenerate via notebooks/01_EDA_and_Preprocessing.ipynb) ──
-preprocessed/X_train.npy
-preprocessed/X_test.npy
+# ── Runtime state written by the AI Engine (admin threshold/weights, FR-14) ──
+ai-engine/saved_models/engine_config.json
 
 # ── Python ──
 __pycache__/

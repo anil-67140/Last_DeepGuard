@@ -1,6 +1,6 @@
 #!/bin/bash
 # DeepGuard AI Engine — Startup Script
-# Run this after placing model files in saved_models/
+# Models live in saved_models/deepguard_training_results/ (core) and saved_models/deepguard_gnn_results/ (optional GNN)
 
 echo "🛡️  DeepGuard AI Engine"
 echo "================================"
@@ -20,15 +20,15 @@ source venv/bin/activate
 echo "📦 Installing dependencies..."
 pip install -r requirements.txt -q
 
-# Check saved_models
-if [ ! -f "saved_models/model_metadata.json" ]; then
+# Check saved_models (new layout produced by the two training notebooks)
+if [ ! -f "saved_models/deepguard_training_results/models/xgboost_final.json" ]; then
     echo ""
-    echo "⚠️  WARNING: saved_models/ not found or incomplete."
+    echo "⚠️  WARNING: trained models not found in saved_models/deepguard_training_results/models/"
     echo "   The AI engine will run in DEMO MODE with random predictions."
-    echo "   To use real models:"
-    echo "   1. Run the Colab notebooks (notebooks/)"
-    echo "   2. Download deepguard_models.zip from Colab"
-    echo "   3. Extract into ai-engine/saved_models/"
+    echo "   To use the real models:"
+    echo "   1. Run notebooks/DeepGuard_Training_Final.ipynb in Colab (T4 GPU)"
+    echo "   2. Unzip DeepGuard_Training_Results.zip into saved_models/deepguard_training_results/"
+    echo "   3. (optional) run notebooks/DeepGuard_GNN_Extra_Final.ipynb -> saved_models/deepguard_gnn_results/"
     echo ""
     mkdir -p saved_models
 fi

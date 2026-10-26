@@ -18,9 +18,9 @@
 ## 🗂️ Project Structure Summary
 
 ```
-deepguard/
-├── 📓 notebooks/          ← Google Colab (train AI models)
-├── 🤖 ai-engine/          ← Python FastAPI (AI microservice)
+Last_DeepGuard/
+├── 📓 notebooks/          ← Google Colab: DeepGuard_Training_Final + DeepGuard_GNN_Extra_Final
+├── 🤖 ai-engine/          ← Python FastAPI (AI microservice) + saved_models/ (trained models, tables, figures)
 ├── ⚙️  backend-node/      ← Node.js Express (API gateway)
 └── 🌐 frontend/           ← React.js (dashboard)
 ```
@@ -100,38 +100,39 @@ OPENAI_API_KEY=sk-your-key-here
 
 ---
 
-### STEP 3 — Train AI Models (Google Colab)
+### STEP 3 — AI models (already trained — retrain only if you want to)
 
-1. Go to **https://colab.research.google.com**
-2. Upload the notebooks from `notebooks/` folder to your Google Drive
-3. Download the IBM AML dataset from Kaggle:
-   - https://www.kaggle.com/datasets/ealtman2019/ibm-transactions-for-anti-money-laundering-aml
-   - Use `HI-Small_Trans.csv`
-4. Run **Notebook 1** (`01_EDA_and_Preprocessing.ipynb`) completely — upload the CSV when
-   prompted, it preprocesses and downloads `preprocessed.zip`
-5. Run **Notebook 2** (`02_Model_Training_and_Evaluation.ipynb`) completely — trains
-   Isolation Forest, Autoencoder, and an Optuna-tuned XGBoost, then blends them into an
-   ensemble. Mounts your Google Drive and checkpoints expensive steps (Autoencoder training,
-   the 40-trial hyperparameter search) so a Colab disconnect doesn't cost you a full re-run.
-   Takes 20–30 minutes end to end the first time; seconds on a resumed session.
-6. At the end, `deepguard_improved_models.zip` downloads automatically
-7. _(Optional)_ Run **Notebook 3** (`03_GNN_Model.ipynb`) for a graph-neural-network model
-   trained on the same data. This one is **not yet wired into the live AI engine** — see
-   "Known Limitations" in the root `README.md`. Treat it as a research/comparison result for
-   your report, not something the running app currently uses.
-8. Extract `deepguard_improved_models.zip` and copy its contents into `ai-engine/saved_models/`
+**The trained models are already in the repo** (`ai-engine/saved_models/`), so you can skip straight to Step 4.
 
 ```
 ai-engine/saved_models/
-├── isolation_forest.pkl
-├── autoencoder.keras   (autoencoder.h5 also included as a fallback)
-├── xgboost_model.json
-├── scaler.pkl
-├── feature_cols.pkl
-└── model_metadata.json
+├── deepguard_training_results/          ← core detector (from DeepGuard_Training_Final.ipynb)
+│   ├── models/   xgboost_final.json · autoencoder.pt · ae_prep.pkl · isolation_forest.pkl · feature_cols.pkl · metadata.json
+│   ├── tables/   T00…T12 .csv (all metrics, classification reports, CIs, operating points, SHAP importance)
+│   └── figures/  fig01…fig17 .png (for your report)
+└── deepguard_gnn_results/               ← OPTIONAL GNN extra (from DeepGuard_GNN_Extra_Final.ipynb)
+    ├── models/   gnn_best.pt · gnn_config.json · gnn_model_def.py · gnn_edge_scaler.pkl · gnn_account_risk.csv · …
+    └── tables/ · figures/
 ```
 
-> **Note:** If you skip this step, the AI engine runs in **DEMO MODE** — it still works but uses random predictions. Perfect for testing the UI! (The repo already ships with trained models in `ai-engine/saved_models/`, so this step is only needed if you want to retrain.)
+If the core folder is missing the AI engine starts in **DEMO MODE** (random scores — fine for testing the UI).
+
+**To retrain (optional, Google Colab):**
+
+1. Go to **https://colab.research.google.com** → upload the two notebooks from `notebooks/`.
+2. Runtime → Change runtime type → **T4 GPU** and **High-RAM**.
+3. The notebooks download `HI-Small_Trans.csv` from Kaggle themselves — upload your `kaggle.json` (Kaggle → Settings → API → Create New Token)
+   when asked, or put the CSV in `MyDrive/fyp-projects/final_model/`.
+   Dataset: https://www.kaggle.com/datasets/ealtman2019/ibm-transactions-for-anti-money-laundering-aml (use `HI-Small_Trans.csv`).
+4. **`DeepGuard_Training_Final.ipynb`** → *Run all* (≈ 40–55 min). It trains Isolation Forest, Autoencoder and four XGBoost variants,
+   prints every metric + classification report, saves all figures/tables, and downloads `DeepGuard_Training_Results.zip`.
+5. Unzip it into `ai-engine/saved_models/deepguard_training_results/` (so `models/`, `tables/`, `figures/` sit directly inside).
+6. *(Optional)* **`DeepGuard_GNN_Extra_Final.ipynb`** → first set `QUICK_TEST = True` and *Run all* (≈ 2 min, only checks that it runs),
+   then `QUICK_TEST = False`, *Restart session and run all* (≈ 40–60 min). Unzip `deepguard_gnn_results.zip` into
+   `ai-engine/saved_models/deepguard_gnn_results/`.
+7. Restart the AI Engine. `GET /health` → `"demo_mode": false`; `GET /models/gnn/status` → `"available": true` if the GNN folder is present.
+
+> Retraining produces new numbers — update the results tables in `README.md` from the notebook's `RESULTS_SUMMARY.md`.
 
 ---
 
@@ -142,6 +143,8 @@ ai-engine/saved_models/
 ```env
 MODEL_PATH=./saved_models
 PORT=8000
+# optional: CONTEXT_ROWS=200000   (account history kept between upload chunks)
+# optional: USE_TRAINVAL_MODEL=false
 ```
 
 #### `backend-node/.env`
@@ -190,7 +193,7 @@ sudo systemctl start mongod
 #### Option A: One command (recommended)
 
 ```bash
-cd deepguard
+cd Last_DeepGuard
 bash start-all.sh
 ```
 
@@ -199,17 +202,17 @@ bash start-all.sh
 **Terminal 1 — AI Engine**
 
 ```bash
-cd deepguard/ai-engine
-python3 -m venv venv
+cd Last_DeepGuard/ai-engine
+python3 -m venv venv              # Python 3.10+ required
 source venv/bin/activate        # Windows: venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements.txt   # Windows: install CPU torch first (see requirements.txt)
 uvicorn main:app --reload --port 8000
 ```
 
 **Terminal 2 — Node.js Backend**
 
 ```bash
-cd deepguard/backend-node
+cd Last_DeepGuard/backend-node
 npm install
 npm run dev
 ```
@@ -217,7 +220,7 @@ npm run dev
 **Terminal 3 — React Frontend**
 
 ```bash
-cd deepguard/frontend
+cd Last_DeepGuard/frontend
 npm install
 npm run dev
 ```
@@ -245,7 +248,8 @@ npm run dev
 1. Login with demo credentials
 2. Click **"Demo Auditor"** or **"Demo Admin"** on login page
 3. Dashboard shows mock data immediately
-4. Upload any CSV file — AI engine processes it (demo mode = random scores)
+4. Upload a CSV in the IBM AML layout (columns: Timestamp, From Bank, Account, To Bank, Account.1, Amount Received, Receiving Currency, Amount Paid, Payment Currency, Payment Format, Is Laundering) — with real models loaded the scores are real; in demo mode they are random.
+   The model uses account *history*, so use a file with many transactions per account (e.g. a few thousand rows sliced from `HI-Small_Trans.csv` in time order), not 5–10 isolated rows.
 5. Network graph shows demo circular transaction pattern
 6. PDF report generates with rule-based summary
 
@@ -258,6 +262,9 @@ npm run dev
 | MongoDB connection error | Make sure MongoDB is running: `mongod --dbpath /data/db`                |
 | Supabase auth error      | Check SUPABASE_URL and keys in `.env` files                             |
 | AI Engine 503            | Start `uvicorn main:app --reload` in `ai-engine/`                       |
+| `/health` says `demo_mode: true` | Core models not found — check `ai-engine/saved_models/deepguard_training_results/models/xgboost_final.json` exists, or torch isn't installed |
+| `pip install` fails for xgboost 3.4.1 | Use Python 3.10+ (xgboost 3.x does not support older Python)       |
+| Scores look odd for a tiny file | The detector needs account history — upload thousands of rows, not a handful |
 | CORS error               | Make sure FRONTEND_URL in backend `.env` matches port 5173              |
 | Port in use              | Change PORT in `.env` files                                             |
 | Puppeteer error on PDF   | `npm install puppeteer` or use `PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=false` |
@@ -271,9 +278,9 @@ React Frontend (5173)
     ↕ REST + Socket.IO
 Node.js Backend (4000)
     ↕ REST API          ↕ MongoDB ($graphLookup)
-Python FastAPI (8000)
-    ↕ joblib/keras
-Trained Models (pkl/keras files)
+Python FastAPI (8000)   features.py → Autoencoder (PyTorch) → XGBoost → SHAP  (+ Isolation Forest signal, optional GNN)
+    ↕ joblib / torch / xgboost
+Trained models (ai-engine/saved_models/…)
 ```
 
 ---

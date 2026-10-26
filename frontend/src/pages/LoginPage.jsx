@@ -88,7 +88,7 @@ export default function LoginPage() {
             <span className="shimmer-text">Trace.</span>
           </h2>
           <p className="text-slate-400 text-base leading-relaxed max-w-sm">
-            Multi-model AI fraud detection using Isolation Forest and Deep Autoencoders with SHAP explainability and interactive network graph analysis.
+            Multi-model AI fraud detection using Isolation Forest, Deep Autoencoders and XGBoost with SHAP explainability and interactive network graph analysis.
           </p>
 
           <div className="mt-8 grid grid-cols-2 gap-4">

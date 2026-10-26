@@ -58,7 +58,7 @@ router.get('/overview', authenticate, async (req, res) => {
  * This combines two genuinely different things the old `/overview` route
  * didn't cover:
  *   - MODEL performance (is the AI good?) — proxied straight from the AI
- *     Engine's saved model_metadata.json via GET /models/info, so it's
+ *     Engine's saved training outputs (metadata.json, tables/) via GET /models/info, so it's
  *     always the real evaluated numbers, never hand-typed into the frontend.
  *   - SYSTEM performance (is the pipeline fast?) — computed here from Job
  *     history: total jobs run, total transactions processed all-time,
@@ -107,6 +107,10 @@ router.get('/performance', authenticate, async (req, res) => {
       modelAvailable: !!modelInfo && !modelInfo.demo_mode,
       demoMode: modelInfo?.demo_mode ?? true,
       modelPerformance: modelInfo?.metadata?.model_performance || null,
+      modelLabels: modelInfo?.metadata?.model_labels || null,
+      finalModel: modelInfo?.metadata?.final_model || null,
+      operatingPoints: modelInfo?.metadata?.operating_points || null,
+      trainingInfo: modelInfo?.metadata?.training || null,
       shapFeatureImportance: modelInfo?.metadata?.shap_feature_importance || null,
       ensembleWeights: modelInfo?.metadata?.ensemble_weights || null,
       ensembleThreshold: modelInfo?.metadata?.ensemble_threshold ?? null,

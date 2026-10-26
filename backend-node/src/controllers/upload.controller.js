@@ -11,7 +11,9 @@ const { createUploadQueue } = require('../queue/uploadQueue');
 const { notifyJobCompleted, notifyJobFailed } = require('../services/email.service');
 
 const AI_ENGINE_URL = process.env.AI_ENGINE_URL || 'http://127.0.0.1:8000';
-const BATCH_SIZE = 1000; // Send to AI in chunks
+// Send to the AI engine in chunks. The v2 models use each account's PAST activity as features; the engine keeps a rolling
+// per-job history, so chunks must be sent in TIME ORDER with the same jobId (done below). Larger chunks = fewer round trips.
+const BATCH_SIZE = 20000;
 
 // Multer storage
 const storage = multer.diskStorage({
@@ -104,54 +106,25 @@ function validateAMLSchema(rawRows) {
 }
 
 /**
- * Compute per-account behavioral aggregates (Sender_TX_Count, Sender_Avg_Amount,
- * Sender_Unique_Receivers, Sender_Total_Amount, Sender_Max_Amount, Receiver_TX_Count)
- * from the full uploaded batch, and attach them to each transaction before sending
- * to the AI Engine.
+ * Order transactions by timestamp (stable) before they are sent to the AI engine in chunks.
  *
- * WHY: main.py's Transaction model defaults these fields to "first-seen account"
- * values (count=1, avg=amount_paid, etc.) when they aren't supplied, because a
- * single incoming transaction has no history of its own. But a bulk file upload
- * *is* a batch of that account's activity, so we can and should compute real
- * aggregates from it — this was a known gap (every live request silently used
- * defaults) and materially affects how well Isolation Forest / Autoencoder /
- * XGBoost can flag velocity-based and layering patterns (Sender_TX_Count,
- * Sender_Unique_Receivers are two of the model's 21 trained features).
+ * WHY: the DeepGuard models (see ai-engine/features.py) score each transaction using the earlier activity of its
+ * sender/receiver. The engine computes those history features itself — it keeps a rolling per-job context — but that only
+ * works if chunks arrive in chronological order. (The old per-account aggregates that used to be computed here are no longer
+ * needed: the v1 model took them as inputs, the v2 engine ignores them.)
  *
- * Note: this reflects the account's activity *within this uploaded file*, not
- * its full lifetime history (which would require a persistent per-account
- * running aggregate across jobs — out of scope for a single-batch endpoint).
+ * Unparseable timestamps inherit the previous valid one so those rows keep their position in the file.
  */
-function attachBehavioralAggregates(transactions) {
-  const senderStats = new Map(); // account -> { count, total, max, receivers:Set }
-  const receiverCounts = new Map(); // to_account -> count
-
-  for (const tx of transactions) {
-    if (tx.account) {
-      const s = senderStats.get(tx.account) || { count: 0, total: 0, max: 0, receivers: new Set() };
-      s.count += 1;
-      s.total += tx.amount_paid || 0;
-      s.max = Math.max(s.max, tx.amount_paid || 0);
-      if (tx.to_account) s.receivers.add(tx.to_account);
-      senderStats.set(tx.account, s);
-    }
-    if (tx.to_account) {
-      receiverCounts.set(tx.to_account, (receiverCounts.get(tx.to_account) || 0) + 1);
-    }
-  }
-
-  return transactions.map(tx => {
-    const s = tx.account ? senderStats.get(tx.account) : null;
-    return {
-      ...tx,
-      sender_tx_count: s ? s.count : 1,
-      sender_avg_amount: s ? s.total / s.count : (tx.amount_paid || 0),
-      sender_unique_receivers: s ? s.receivers.size : 1,
-      sender_total_amount: s ? s.total : (tx.amount_paid || 0),
-      sender_max_amount: s ? s.max : (tx.amount_paid || 0),
-      receiver_tx_count: tx.to_account ? (receiverCounts.get(tx.to_account) || 1) : 1
-    };
+function sortByTimestamp(transactions) {
+  let last = 0;
+  const keyed = transactions.map((tx, i) => {
+    let t = Date.parse(String(tx.timestamp || '').replace(/\//g, '-').replace(' ', 'T'));
+    if (Number.isNaN(t)) t = Date.parse(tx.timestamp);
+    if (Number.isNaN(t)) t = last; else last = t;
+    return { tx, t, i };
   });
+  keyed.sort((a, b) => (a.t - b.t) || (a.i - b.i));
+  return keyed.map(k => k.tx);
 }
 
 /**
@@ -233,7 +206,7 @@ async function getQueueStatus() {
 }
 
 /**
- * The actual analysis pipeline for one job: parse -> aggregate -> AI Engine
+ * The actual analysis pipeline for one job: parse -> sort by time -> AI Engine
  * (in batches) -> save -> summarise -> notify. Runs inside a queue worker.
  */
 async function processUploadJob({ jobId, filePath, ext, userEmail, useGnn }) {
@@ -246,7 +219,7 @@ async function processUploadJob({ jobId, filePath, ext, userEmail, useGnn }) {
 
     const rawRows = ext === '.csv' ? await parseCSV(filePath) : parseXLSX(filePath);
     const parsedTransactions = rawRows.map((row, idx) => parseIBMAMLRow(row, idx));
-    const transactions = attachBehavioralAggregates(parsedTransactions);
+    const transactions = sortByTimestamp(parsedTransactions);
 
     await Job.findOneAndUpdate({ jobId }, {
       status: 'analyzing',

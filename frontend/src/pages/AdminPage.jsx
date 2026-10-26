@@ -351,8 +351,8 @@ function ModelsTab() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
-  const [threshold, setThreshold] = useState(0.3)
-  const [weights, setWeights] = useState({ xgboost: 0.85, autoencoder: 0.15, isolation_forest: 0 })
+  const [threshold, setThreshold] = useState(0.48)
+  const [weights, setWeights] = useState({ xgboost: 1.0, autoencoder: 0, isolation_forest: 0 })
   const [gnnStatus, setGnnStatus] = useState(null)
   const [gnnLoading, setGnnLoading] = useState(true)
 
@@ -441,8 +441,10 @@ function ModelsTab() {
       <div className="card">
         <h3 className="text-sm font-semibold text-white mb-1">Fraud Threshold</h3>
         <p className="text-xs text-slate-400 mb-4">
-          A transaction is flagged as fraud when its ensemble risk score is at or above this value.
-          Lower = more sensitive (more flags, more false positives). Higher = stricter.
+          A transaction is flagged as fraud when its risk score is at or above this value. The default (0.48) is the
+          F1-optimal threshold tuned on the validation period for the final XGBoost + Autoencoder model. Lower = more
+          sensitive (more flags, more false positives); higher = stricter. See Performance Analytics → Operating points
+          for the precision/recall trade-offs.
         </p>
         <div className="flex items-center gap-4 max-w-lg">
           <input type="range" min="0.05" max="0.9" step="0.01" value={threshold}
@@ -460,7 +462,10 @@ function ModelsTab() {
       <div className="card">
         <h3 className="text-sm font-semibold text-white mb-1">Ensemble Weights</h3>
         <p className="text-xs text-slate-400 mb-4">
-          How much each model contributes to the final risk score. Must sum to 1.0.
+          How much each model contributes to the final risk score. Must sum to 1.0. The default is 100% XGBoost
+          (the Autoencoder is already an input feature of it, and the ablation showed extra blending adds nothing).
+          If you change the weights, re-tune the threshold above — the Isolation Forest / Autoencoder scores use a
+          different 0–1 scale than the XGBoost probability.
           Current sum: <span className={Math.abs(weightSum - 1) > 0.01 ? 'text-red-400 font-bold' : 'text-green-400 font-bold'}>{weightSum.toFixed(2)}</span>
         </p>
         <div className="space-y-3 max-w-lg">
@@ -504,7 +509,7 @@ function ModelsTab() {
           {!gnnLoading && (
             <span className={`px-2 py-0.5 rounded-full text-xs font-semibold
               ${gnnStatus?.available ? 'bg-purple-500/10 text-purple-300' : 'bg-slate-700 text-slate-400'}`}>
-              {gnnStatus?.available ? 'Available' : 'Not installed'}
+              {gnnStatus?.available ? 'Available' : 'Not loaded'}
             </span>
           )}
         </div>
@@ -514,10 +519,10 @@ function ModelsTab() {
         ) : gnnStatus?.available ? (
           <div className="space-y-3 mt-3">
             <p className="text-xs text-slate-400">
-              A GINE-based graph neural network, trained separately from the core ensemble, that
-              scores transactions using the account-connection graph rather than per-transaction
-              features alone. Selectable per-upload from the Upload page, or blended into the
-              ensemble above.
+              An optional extra: an edge-aware graph neural network, trained separately from the core
+              detector, that scores transactions using the account-connection graph. It works on a whole
+              batch/period graph (batch analysis, not real-time), so use it as an investigation aid next to the
+              network graph. Selectable per-upload from the Upload page, or blended into the score above.
             </p>
             <div className="grid grid-cols-2 gap-3 max-w-md">
               {[
@@ -544,15 +549,14 @@ function ModelsTab() {
         ) : (
           <div className="mt-3 bg-slate-800/50 rounded-lg p-3 space-y-2">
             <p className="text-xs text-slate-400">
-              The GNN isn't loaded on the AI Engine right now — the rest of the platform (Isolation
-              Forest + Autoencoder + XGBoost) is completely unaffected by this.
+              The GNN isn't loaded on the AI Engine right now — the rest of the platform (Autoencoder +
+              XGBoost + Isolation Forest signal) is completely unaffected by this.
             </p>
-            <p className="text-xs text-slate-500">To enable it, on the machine running the AI Engine:</p>
-            <pre className="text-xs bg-slate-950 rounded-lg p-2 text-slate-300 overflow-x-auto">pip install torch==2.2.2 torch_geometric==2.5.3</pre>
             <p className="text-xs text-slate-500">
-              then restart the AI Engine and check its startup log for a line starting "✅ GNN
-              loaded" (or a specific error if the reconstructed architecture didn't match the
-              saved weights).
+              It needs no extra packages beyond PyTorch (already required). Make sure the folder
+              <code className="mx-1">ai-engine/saved_models/deepguard_gnn_results/models/</code>
+              (from the GNN notebook) exists, then restart the AI Engine and look for the startup line
+              "✅ GNN loaded" (or the specific error).
             </p>
           </div>
         )}
@@ -561,7 +565,7 @@ function ModelsTab() {
       {config?.model_performance && (
         <div className="card">
           <h3 className="text-sm font-semibold text-white mb-3">Model Performance (from training)</h3>
-          <p className="text-xs text-slate-500">See saved_models/model_metadata.json for full evaluation metrics.</p>
+          <p className="text-xs text-slate-500">Full evaluation tables and figures: ai-engine/saved_models/deepguard_training_results/ (tables/ and figures/).</p>
         </div>
       )}
     </div>

@@ -220,7 +220,7 @@ export default function UploadPage() {
             {gnnAvailable === null
               ? 'Checking availability…'
               : gnnAvailable
-                ? 'Builds a transaction graph from this file and adds a GNN fraud probability per transaction, alongside Isolation Forest / Autoencoder / XGBoost.'
+                ? 'Builds a transaction graph from this file and adds a GNN fraud probability per transaction (optional extra, batch network analysis), alongside the Autoencoder / XGBoost / Isolation Forest scores.'
                 : 'Not installed on the AI Engine — see Admin → AI Models → GNN, or SETUP_GUIDE.md, to enable it.'}
           </span>
         </label>

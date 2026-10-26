@@ -1,0 +1,10 @@
+MODEL_PATH="./saved_models"
+PORT=8000
+LOG_LEVEL="info"
+
+# ── optional tuning ──
+# CORE_MODEL_DIR=./saved_models/deepguard_training_results/models   # override where the core models are
+# GNN_MODEL_DIR=./saved_models/deepguard_gnn_results/models         # override where the GNN package is
+# USE_TRAINVAL_MODEL=false      # true = serve xgboost_final_trainval.json (refit on train+val; same threshold, reported separately)
+# CONTEXT_ROWS=200000           # rolling per-job history kept between upload chunks (account history for the features)
+# MAX_BATCH=100000              # max transactions per request
