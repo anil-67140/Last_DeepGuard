@@ -1,0 +1,44 @@
+# ── Environment files (secrets) ──
+.env
+*/.env
+**/.env
+
+# ── Large dataset (download from Kaggle — see README) ──
+HI-Small_Trans.csv
+**/HI-Small_Trans.csv
+*.csv.zip
+
+# ── Large preprocessed arrays (regenerate via notebooks/01_EDA_and_Preprocessing.ipynb) ──
+preprocessed/X_train.npy
+preprocessed/X_test.npy
+
+# ── Python ──
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+*.ipynb_checkpoints/
+
+# ── Node (backend-node & frontend) ──
+node_modules/
+dist/
+build/
+.vite/
+*.log
+npm-debug.log*
+
+# ── Runtime-generated content (kept empty via .gitkeep) ──
+backend-node/uploads/*
+!backend-node/uploads/.gitkeep
+backend-node/reports/*
+!backend-node/reports/.gitkeep
+logs/*
+!logs/.gitkeep
+
+# ── OS / editor cruft ──
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
