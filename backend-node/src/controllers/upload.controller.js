@@ -1,16 +1,19 @@
-const multer = require('multer');
-const csv = require('csv-parser');
-const XLSX = require('xlsx');
-const fs = require('fs');
-const path = require('path');
-const { v4: uuidv4 } = require('uuid');
-const axios = require('axios');
-const Transaction = require('../models/Transaction.model');
-const Job = require('../models/Job.model');
-const { createUploadQueue } = require('../queue/uploadQueue');
-const { notifyJobCompleted, notifyJobFailed } = require('../services/email.service');
+const multer = require("multer");
+const csv = require("csv-parser");
+const XLSX = require("xlsx");
+const fs = require("fs");
+const path = require("path");
+const { v4: uuidv4 } = require("uuid");
+const axios = require("axios");
+const Transaction = require("../models/Transaction.model");
+const Job = require("../models/Job.model");
+const { createUploadQueue } = require("../queue/uploadQueue");
+const {
+  notifyJobCompleted,
+  notifyJobFailed,
+} = require("../services/email.service");
 
-const AI_ENGINE_URL = process.env.AI_ENGINE_URL || 'http://127.0.0.1:8000';
+const AI_ENGINE_URL = process.env.AI_ENGINE_URL || "http://127.0.0.1:8000";
 // Send to the AI engine in chunks. The v2 models use each account's PAST activity as features; the engine keeps a rolling
 // per-job history, so chunks must be sent in TIME ORDER with the same jobId (done below). Larger chunks = fewer round trips.
 const BATCH_SIZE = 20000;
@@ -18,30 +21,30 @@ const BATCH_SIZE = 20000;
 // Multer storage
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const uploadDir = path.join(__dirname, '../../uploads');
+    const uploadDir = path.join(__dirname, "../../uploads");
     if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
     cb(null, uploadDir);
   },
   filename: (req, file, cb) => {
     cb(null, `${Date.now()}_${file.originalname}`);
-  }
+  },
 });
 
 const fileFilter = (req, file, cb) => {
-  const allowed = ['.csv', '.xlsx', '.xls'];
+  const allowed = [".csv", ".xlsx", ".xls"];
   const ext = path.extname(file.originalname).toLowerCase();
   if (allowed.includes(ext)) {
     cb(null, true);
   } else {
-    cb(new Error('Only CSV, XLSX, and XLS files are allowed'), false);
+    cb(new Error("Only CSV, XLSX, and XLS files are allowed"), false);
   }
 };
 
 const upload = multer({
   storage,
   fileFilter,
-  limits: { fileSize: 100 * 1024 * 1024 } // 100MB
-}).single('file');
+  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB
+}).single("file");
 
 /**
  * Parse IBM AML CSV/XLSX into transaction objects
@@ -51,18 +54,22 @@ function parseIBMAMLRow(row, idx) {
   // Amount Received, Receiving Currency, Amount Paid, Payment Currency,
   // Payment Format, Is Laundering
   return {
-    transaction_id: row['Transaction ID'] || row['Id'] || `TX-${idx + 1}`,
-    timestamp: row['Timestamp'] || row['timestamp'] || new Date().toISOString(),
-    from_bank: row['From Bank'] || row['from_bank'] || '',
-    account: row['Account'] || row['account'] || '',
-    to_bank: row['To Bank'] || row['to_bank'] || '',
-    to_account: row['Account.1'] || row['to_account'] || row['ToAccount'] || '',
-    amount_paid: parseFloat(row['Amount Paid'] || row['amount_paid'] || 0),
-    payment_currency: row['Payment Currency'] || row['payment_currency'] || 'USD',
-    amount_received: parseFloat(row['Amount Received'] || row['amount_received'] || 0),
-    receiving_currency: row['Receiving Currency'] || row['receiving_currency'] || 'USD',
-    payment_format: row['Payment Format'] || row['payment_format'] || 'Wire',
-    is_laundering: parseInt(row['Is Laundering'] || row['is_laundering'] || 0)
+    transaction_id: row["Transaction ID"] || row["Id"] || `TX-${idx + 1}`,
+    timestamp: row["Timestamp"] || row["timestamp"] || new Date().toISOString(),
+    from_bank: row["From Bank"] || row["from_bank"] || "",
+    account: row["Account"] || row["account"] || "",
+    to_bank: row["To Bank"] || row["to_bank"] || "",
+    to_account: row["Account.1"] || row["to_account"] || row["ToAccount"] || "",
+    amount_paid: parseFloat(row["Amount Paid"] || row["amount_paid"] || 0),
+    payment_currency:
+      row["Payment Currency"] || row["payment_currency"] || "USD",
+    amount_received: parseFloat(
+      row["Amount Received"] || row["amount_received"] || 0,
+    ),
+    receiving_currency:
+      row["Receiving Currency"] || row["receiving_currency"] || "USD",
+    payment_format: row["Payment Format"] || row["payment_format"] || "Wire",
+    is_laundering: parseInt(row["Is Laundering"] || row["is_laundering"] || 0),
   };
 }
 
@@ -76,29 +83,45 @@ function parseIBMAMLRow(row, idx) {
  */
 function validateAMLSchema(rawRows) {
   if (!rawRows || rawRows.length === 0) {
-    return { valid: false, error: 'The file is empty — no rows were found to process.' };
+    return {
+      valid: false,
+      error: "The file is empty — no rows were found to process.",
+    };
   }
 
   const headers = Object.keys(rawRows[0]);
-  const has = (aliases) => aliases.some(a => headers.includes(a));
+  const has = (aliases) => aliases.some((a) => headers.includes(a));
 
   const checks = [
-    { label: 'a sender account column', aliases: ['Account', 'account'] },
-    { label: 'a receiver account column', aliases: ['Account.1', 'to_account', 'ToAccount'] },
-    { label: 'an amount column', aliases: ['Amount Paid', 'amount_paid', 'Amount Received', 'amount_received'] },
+    { label: "a sender account column", aliases: ["Account", "account"] },
+    {
+      label: "a receiver account column",
+      aliases: ["Account.1", "to_account", "ToAccount"],
+    },
+    {
+      label: "an amount column",
+      aliases: [
+        "Amount Paid",
+        "amount_paid",
+        "Amount Received",
+        "amount_received",
+      ],
+    },
   ];
 
-  const missing = checks.filter(c => !has(c.aliases));
+  const missing = checks.filter((c) => !has(c.aliases));
 
   if (missing.length > 0) {
-    const missingLabels = missing.map(m => m.label).join(', ');
-    const foundPreview = headers.slice(0, 8).join(', ') + (headers.length > 8 ? ', …' : '');
+    const missingLabels = missing.map((m) => m.label).join(", ");
+    const foundPreview =
+      headers.slice(0, 8).join(", ") + (headers.length > 8 ? ", …" : "");
     return {
       valid: false,
-      error: `This doesn't look like an IBM-AML-style transaction file — missing ${missingLabels}. ` +
+      error:
+        `This doesn't look like an IBM-AML-style transaction file — missing ${missingLabels}. ` +
         `Expected columns like "Account", "Account.1", "Amount Paid", "Amount Received", "Payment Format". ` +
         `Found instead: ${foundPreview}. Make sure you're uploading the transaction dataset ` +
-        `(e.g. HI-Small_Trans.csv), not a different file.`
+        `(e.g. HI-Small_Trans.csv), not a different file.`,
     };
   }
 
@@ -118,13 +141,18 @@ function validateAMLSchema(rawRows) {
 function sortByTimestamp(transactions) {
   let last = 0;
   const keyed = transactions.map((tx, i) => {
-    let t = Date.parse(String(tx.timestamp || '').replace(/\//g, '-').replace(' ', 'T'));
+    let t = Date.parse(
+      String(tx.timestamp || "")
+        .replace(/\//g, "-")
+        .replace(" ", "T"),
+    );
     if (Number.isNaN(t)) t = Date.parse(tx.timestamp);
-    if (Number.isNaN(t)) t = last; else last = t;
+    if (Number.isNaN(t)) t = last;
+    else last = t;
     return { tx, t, i };
   });
-  keyed.sort((a, b) => (a.t - b.t) || (a.i - b.i));
-  return keyed.map(k => k.tx);
+  keyed.sort((a, b) => a.t - b.t || a.i - b.i);
+  return keyed.map((k) => k.tx);
 }
 
 /**
@@ -135,9 +163,9 @@ function parseCSV(filePath) {
     const rows = [];
     fs.createReadStream(filePath)
       .pipe(csv())
-      .on('data', (row) => rows.push(row))
-      .on('end', () => resolve(rows))
-      .on('error', reject);
+      .on("data", (row) => rows.push(row))
+      .on("end", () => resolve(rows))
+      .on("error", reject);
   });
 }
 
@@ -156,11 +184,15 @@ function parseXLSX(filePath) {
  * the engine if the GNN isn't installed/loaded — see GET /models/gnn/status).
  */
 async function sendToAIEngine(transactions, jobId, useGnn = false) {
-  const response = await axios.post(`${AI_ENGINE_URL}/analyze/batch`, {
-    transactions,
-    job_id: jobId,
-    use_gnn: !!useGnn
-  }, { timeout: 300000 }); // 5 min timeout for large batches
+  const response = await axios.post(
+    `${AI_ENGINE_URL}/analyze/batch`,
+    {
+      transactions,
+      job_id: jobId,
+      use_gnn: !!useGnn,
+    },
+    { timeout: 300000 },
+  ); // 5 min timeout for large batches
   return response.data;
 }
 
@@ -169,16 +201,32 @@ async function sendToAIEngine(transactions, jobId, useGnn = false) {
  * without parsing the whole thing twice (the queue worker does the full parse).
  */
 function peekRows(filePath, ext, maxRows = 5) {
-  if (ext !== '.csv') return Promise.resolve(parseXLSX(filePath).slice(0, maxRows));
+  if (ext !== ".csv")
+    return Promise.resolve(parseXLSX(filePath).slice(0, maxRows));
   return new Promise((resolve, reject) => {
     const rows = [];
     let settled = false;
     const stream = fs.createReadStream(filePath);
-    const finish = () => { if (settled) return; settled = true; stream.destroy(); resolve(rows.slice(0, maxRows)); };
-    stream.pipe(csv())
-      .on('data', (row) => { if (settled) return; rows.push(row); if (rows.length >= maxRows) finish(); })
-      .on('end', finish)
-      .on('error', (e) => { if (!settled) { settled = true; reject(e); } });
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      stream.destroy();
+      resolve(rows.slice(0, maxRows));
+    };
+    stream
+      .pipe(csv())
+      .on("data", (row) => {
+        if (settled) return;
+        rows.push(row);
+        if (rows.length >= maxRows) finish();
+      })
+      .on("end", finish)
+      .on("error", (e) => {
+        if (!settled) {
+          settled = true;
+          reject(e);
+        }
+      });
   });
 }
 
@@ -197,7 +245,8 @@ async function initUploadQueue(io) {
 }
 
 async function getUploadQueue() {
-  if (!uploadQueue) uploadQueue = await createUploadQueue({ processor: processUploadJob });
+  if (!uploadQueue)
+    uploadQueue = await createUploadQueue({ processor: processUploadJob });
   return uploadQueue;
 }
 
@@ -214,142 +263,200 @@ async function processUploadJob({ jobId, filePath, ext, userEmail, useGnn }) {
   const startTime = Date.now();
 
   try {
-    await Job.findOneAndUpdate({ jobId }, { status: 'parsing', progress: 8 });
-    io?.to(`job_${jobId}`).emit('progress', { jobId, status: 'parsing', progress: 10 });
+    await Job.findOneAndUpdate({ jobId }, { status: "parsing", progress: 8 });
+    io?.to(`job_${jobId}`).emit("progress", {
+      jobId,
+      status: "parsing",
+      progress: 10,
+    });
 
-    const rawRows = ext === '.csv' ? await parseCSV(filePath) : parseXLSX(filePath);
-    const parsedTransactions = rawRows.map((row, idx) => parseIBMAMLRow(row, idx));
+    // Memory note: a 300k-row file used to be held as raw rows + parsed rows + sorted rows + AI results + insert documents
+    // at the same time, which exhausted Node's ~2 GB heap. Now each intermediate copy is released as soon as it is no longer
+    // needed, and results are saved to MongoDB chunk by chunk instead of all at the end.
+    let rawRows =
+      ext === ".csv" ? await parseCSV(filePath) : parseXLSX(filePath);
+    let parsedTransactions = new Array(rawRows.length);
+    for (let i = 0; i < rawRows.length; i++) {
+      parsedTransactions[i] = parseIBMAMLRow(rawRows[i], i);
+      rawRows[i] = null;
+    }
+    rawRows = null;
     const transactions = sortByTimestamp(parsedTransactions);
+    parsedTransactions = null;
 
-    await Job.findOneAndUpdate({ jobId }, {
-      status: 'analyzing',
+    await Job.findOneAndUpdate(
+      { jobId },
+      {
+        status: "analyzing",
+        progress: 20,
+        totalTransactions: transactions.length,
+      },
+    );
+
+    io?.to(`job_${jobId}`).emit("progress", {
+      jobId,
+      status: "analyzing",
       progress: 20,
-      totalTransactions: transactions.length
+      total: transactions.length,
     });
 
-    io?.to(`job_${jobId}`).emit('progress', {
-      jobId, status: 'analyzing', progress: 20,
-      total: transactions.length
-    });
-
-    // ── Send to AI Engine in batches ──
-    const allResults = [];
+    // ── Send to AI Engine in batches; save each batch's results immediately; keep only running totals in memory ──
     const totalBatches = Math.ceil(transactions.length / BATCH_SIZE);
+    let processed = 0,
+      flaggedCount = 0,
+      criticalCount = 0,
+      riskSum = 0,
+      usedGnn = false;
+    let insertedCount = 0,
+      firstInsertError = null;
 
     for (let i = 0; i < totalBatches; i++) {
       const batch = transactions.slice(i * BATCH_SIZE, (i + 1) * BATCH_SIZE);
       const response = await sendToAIEngine(batch, jobId, useGnn);
-      allResults.push(...(response.results || []));
+      const results = response.results || [];
 
-      const progress = 20 + Math.round((i + 1) / totalBatches * 50);
-      await Job.findOneAndUpdate({ jobId }, {
-        progress,
-        processedTransactions: allResults.length
+      let docs = results.map((result, k) => {
+        const tx = batch[k] || {};
+        return {
+          jobId,
+          transactionId: result.transaction_id,
+          timestamp: tx.timestamp ? new Date(tx.timestamp) : new Date(),
+          fromBank: tx.from_bank,
+          account: tx.account,
+          toBank: tx.to_bank,
+          toAccount: tx.to_account,
+          amountPaid: tx.amount_paid,
+          paymentCurrency: tx.payment_currency,
+          amountReceived: tx.amount_received,
+          receivingCurrency: tx.receiving_currency,
+          paymentFormat: tx.payment_format,
+          isLaundering: tx.is_laundering,
+          riskScore: result.risk_score,
+          riskLevel: result.risk_level,
+          isFraud: result.is_fraud,
+          isolationForestScore: result.isolation_forest_score,
+          autoencoderScore: result.autoencoder_score,
+          gnnScore: result.gnn_score ?? null,
+          fraudCategory: result.fraud_category,
+          shapValues: result.shap_values || {},
+          graphLinks: tx.to_account ? [tx.to_account] : [],
+          createdAt: new Date(), // lean insert skips schema defaults, so it is set here
+        };
       });
-      io?.to(`job_${jobId}`).emit('progress', {
-        jobId, status: 'analyzing', progress,
-        processed: allResults.length, total: transactions.length
-      });
-    }
 
-    // ── Save results to MongoDB ──
-    await Job.findOneAndUpdate({ jobId }, { status: 'saving', progress: 75 });
-    io?.to(`job_${jobId}`).emit('progress', { jobId, status: 'saving', progress: 75 });
+      // lean:true = insert plain objects (no per-document Mongoose hydration) — the main memory/speed saver.
+      // ordered:false so one bad document doesn't block the rest; failures are counted and surfaced, not swallowed.
+      try {
+        const ins = await Transaction.insertMany(docs, {
+          ordered: false,
+          lean: true,
+        });
+        insertedCount += ins.length;
+      } catch (insertErr) {
+        insertedCount +=
+          insertErr.insertedDocs?.length ||
+          insertErr.result?.insertedCount ||
+          0;
+        firstInsertError =
+          firstInsertError ||
+          insertErr.writeErrors?.[0]?.errmsg ||
+          insertErr.message;
+      }
+      docs = null;
 
-    const txDocs = allResults.map((result, idx) => {
-      const tx = transactions[idx] || {};
-      return {
-        jobId,
-        transactionId: result.transaction_id,
-        timestamp: tx.timestamp ? new Date(tx.timestamp) : new Date(),
-        fromBank: tx.from_bank,
-        account: tx.account,
-        toBank: tx.to_bank,
-        toAccount: tx.to_account,
-        amountPaid: tx.amount_paid,
-        paymentCurrency: tx.payment_currency,
-        amountReceived: tx.amount_received,
-        receivingCurrency: tx.receiving_currency,
-        paymentFormat: tx.payment_format,
-        isLaundering: tx.is_laundering,
-        riskScore: result.risk_score,
-        riskLevel: result.risk_level,
-        isFraud: result.is_fraud,
-        isolationForestScore: result.isolation_forest_score,
-        autoencoderScore: result.autoencoder_score,
-        gnnScore: result.gnn_score ?? null,
-        fraudCategory: result.fraud_category,
-        shapValues: result.shap_values || {},
-        graphLinks: tx.to_account ? [tx.to_account] : []
-      };
-    });
+      for (const r of results) {
+        if (r.is_fraud) flaggedCount++;
+        if (r.risk_level === "Critical") criticalCount++;
+        riskSum += r.risk_score;
+        if (r.gnn_score !== null && r.gnn_score !== undefined) usedGnn = true;
+      }
+      processed += results.length;
 
-    // Bulk insert (ordered:false so one bad doc doesn't block the rest —
-    // but we surface what happened instead of swallowing it)
-    let insertedCount = 0;
-    try {
-      const insertResult = await Transaction.insertMany(txDocs, { ordered: false });
-      insertedCount = insertResult.length;
-      console.log(`✅ Job ${jobId}: inserted ${insertedCount}/${txDocs.length} transactions`);
-    } catch (insertErr) {
-      insertedCount = insertErr.insertedDocs?.length || insertErr.result?.insertedCount || 0;
-      const sampleError = insertErr.writeErrors?.[0]?.errmsg || insertErr.message;
-      console.error(
-        `⚠️  Job ${jobId}: only ${insertedCount}/${txDocs.length} transactions saved. ` +
-        `First error: ${sampleError}`
+      const progress = 20 + Math.round(((i + 1) / totalBatches) * 75);
+      await Job.findOneAndUpdate(
+        { jobId },
+        { progress, processedTransactions: processed },
       );
-      await Job.findOneAndUpdate({ jobId }, {
-        saveWarning: `Only ${insertedCount}/${txDocs.length} transaction records saved. ` +
-          `Analysis/Graph/Report views may be incomplete. Cause: ${sampleError}`
+      io?.to(`job_${jobId}`).emit("progress", {
+        jobId,
+        status: "analyzing",
+        progress,
+        processed,
+        total: transactions.length,
       });
     }
 
-    // ── Compute summary ──
-    const flagged = allResults.filter(r => r.is_fraud);
-    const critical = allResults.filter(r => r.risk_level === 'Critical');
-    const avgRisk = allResults.reduce((s, r) => s + r.risk_score, 0) / Math.max(allResults.length, 1);
-    const usedGnn = allResults.some(r => r.gnn_score !== null && r.gnn_score !== undefined);
+    if (insertedCount < processed) {
+      console.error(
+        `⚠️  Job ${jobId}: only ${insertedCount}/${processed} transactions saved. First error: ${firstInsertError}`,
+      );
+      await Job.findOneAndUpdate(
+        { jobId },
+        {
+          saveWarning:
+            `Only ${insertedCount}/${processed} transaction records saved. ` +
+            `Analysis/Graph/Report views may be incomplete. Cause: ${firstInsertError}`,
+        },
+      );
+    } else {
+      console.log(
+        `✅ Job ${jobId}: inserted ${insertedCount}/${processed} transactions`,
+      );
+    }
+
+    // ── Summary ──
+    const avgRisk = riskSum / Math.max(processed, 1);
     const processingTime = Date.now() - startTime;
 
-    const finalJob = await Job.findOneAndUpdate({ jobId }, {
-      status: 'completed',
-      progress: 100,
-      totalTransactions: allResults.length,
-      processedTransactions: allResults.length,
-      flaggedCount: flagged.length,
-      criticalCount: critical.length,
-      cleanCount: allResults.length - flagged.length,
-      averageRiskScore: Math.round(avgRisk * 10) / 10,
-      processingTimeMs: processingTime,
-      usedGnn,
-      completedAt: new Date()
-    }, { new: true }).lean();
+    const finalJob = await Job.findOneAndUpdate(
+      { jobId },
+      {
+        status: "completed",
+        progress: 100,
+        totalTransactions: processed,
+        processedTransactions: processed,
+        flaggedCount,
+        criticalCount,
+        cleanCount: processed - flaggedCount,
+        averageRiskScore: Math.round(avgRisk * 10) / 10,
+        processingTimeMs: processingTime,
+        usedGnn,
+        completedAt: new Date(),
+      },
+      { new: true },
+    ).lean();
 
-    io?.to(`job_${jobId}`).emit('completed', {
+    io?.to(`job_${jobId}`).emit("completed", {
       jobId,
-      status: 'completed',
+      status: "completed",
       summary: {
-        total: allResults.length,
-        flagged: flagged.length,
-        critical: critical.length,
-        clean: allResults.length - flagged.length,
+        total: processed,
+        flagged: flaggedCount,
+        critical: criticalCount,
+        clean: processed - flaggedCount,
         avgRisk: Math.round(avgRisk * 10) / 10,
-        processingTimeMs: processingTime
-      }
+        processingTimeMs: processingTime,
+      },
     });
 
     // FR-19: email leg of the alert (dashboard leg is the socket event above).
     // notifyJobCompleted never throws and never blocks the job's outcome.
     await notifyJobCompleted(finalJob, userEmail);
-
   } catch (err) {
     console.error(`❌ Job ${jobId} failed:`, err.message);
-    const failedJob = await Job.findOneAndUpdate({ jobId }, {
-      status: 'failed',
-      errorMessage: err.message
-    }, { new: true }).lean();
-    io?.to(`job_${jobId}`).emit('error', { jobId, error: err.message });
-    await notifyJobFailed(failedJob || { jobId, errorMessage: err.message }, userEmail);
+    const failedJob = await Job.findOneAndUpdate(
+      { jobId },
+      {
+        status: "failed",
+        errorMessage: err.message,
+      },
+      { new: true },
+    ).lean();
+    io?.to(`job_${jobId}`).emit("error", { jobId, error: err.message });
+    await notifyJobFailed(
+      failedJob || { jobId, errorMessage: err.message },
+      userEmail,
+    );
   } finally {
     fs.unlink(filePath, () => {});
   }
@@ -365,7 +472,7 @@ const uploadFile = async (req, res) => {
     }
 
     if (!req.file) {
-      return res.status(400).json({ error: 'No file uploaded' });
+      return res.status(400).json({ error: "No file uploaded" });
     }
 
     const filePath = req.file.path;
@@ -379,7 +486,9 @@ const uploadFile = async (req, res) => {
       sampleRows = await peekRows(filePath, ext);
     } catch (err) {
       fs.unlink(filePath, () => {});
-      return res.status(400).json({ error: `Could not parse file: ${err.message}` });
+      return res
+        .status(400)
+        .json({ error: `Could not parse file: ${err.message}` });
     }
 
     const schemaCheck = validateAMLSchema(sampleRows);
@@ -389,7 +498,7 @@ const uploadFile = async (req, res) => {
     }
 
     const jobId = uuidv4();
-    const useGnn = String(req.body?.useGnn ?? '').toLowerCase() === 'true';
+    const useGnn = String(req.body?.useGnn ?? "").toLowerCase() === "true";
 
     try {
       await Job.create({
@@ -398,29 +507,38 @@ const uploadFile = async (req, res) => {
         fileName: req.file.filename,
         originalName: req.file.originalname,
         fileSize: req.file.size,
-        status: 'queued',
-        progress: 2
+        status: "queued",
+        progress: 2,
       });
 
       const queue = await getUploadQueue();
       const { position } = await queue.add({
-        jobId, filePath, ext, userEmail: req.user?.email, useGnn
+        jobId,
+        filePath,
+        ext,
+        userEmail: req.user?.email,
+        useGnn,
       });
 
       res.status(202).json({
         jobId,
-        message: position > 1
-          ? `File received — queued (${position - 1} ahead of it)`
-          : 'File received, processing started',
-        status: 'queued',
+        message:
+          position > 1
+            ? `File received — queued (${position - 1} ahead of it)`
+            : "File received, processing started",
+        status: "queued",
         queue: queue.mode,
-        position
+        position,
       });
     } catch (e) {
       console.error(`❌ Could not enqueue job ${jobId}:`, e.message);
-      await Job.findOneAndUpdate({ jobId }, { status: 'failed', errorMessage: `Could not queue job: ${e.message}` });
+      await Job.findOneAndUpdate(
+        { jobId },
+        { status: "failed", errorMessage: `Could not queue job: ${e.message}` },
+      );
       fs.unlink(filePath, () => {});
-      if (!res.headersSent) res.status(500).json({ error: `Could not queue job: ${e.message}` });
+      if (!res.headersSent)
+        res.status(500).json({ error: `Could not queue job: ${e.message}` });
     }
   });
 };
@@ -432,7 +550,7 @@ const getJobStatus = async (req, res) => {
   try {
     const { jobId } = req.params;
     const job = await Job.findOne({ jobId, userId: req.userId });
-    if (!job) return res.status(404).json({ error: 'Job not found' });
+    if (!job) return res.status(404).json({ error: "Job not found" });
     res.json(job);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -447,7 +565,7 @@ const getUserJobs = async (req, res) => {
     const jobs = await Job.find({ userId: req.userId })
       .sort({ createdAt: -1 })
       .limit(20)
-      .select('-__v');
+      .select("-__v");
     res.json(jobs);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -455,6 +573,10 @@ const getUserJobs = async (req, res) => {
 };
 
 module.exports = {
-  uploadFile, getJobStatus, getUserJobs, initUploadQueue, getQueueStatus,
-  _internals: { processUploadJob, peekRows, validateAMLSchema, parseIBMAMLRow }
+  uploadFile,
+  getJobStatus,
+  getUserJobs,
+  initUploadQueue,
+  getQueueStatus,
+  _internals: { processUploadJob, peekRows, validateAMLSchema, parseIBMAMLRow },
 };
