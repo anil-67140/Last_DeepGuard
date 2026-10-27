@@ -49,11 +49,13 @@ export default function UploadPage() {
   const [socket, setSocket] = useState(null)
   const [useGnn, setUseGnn] = useState(false)
   const [gnnAvailable, setGnnAvailable] = useState(null) // null = still checking
+  const [gnnReason, setGnnReason] = useState(null)       // 'engine_offline' | 'not_installed' | null
 
   useEffect(() => {
-    adminAPI.getGnnStatus()
-      .then(r => setGnnAvailable(!!r.data.available))
-      .catch(() => setGnnAvailable(false))
+    // Uses the upload-scoped endpoint so auditors (not just admins) get the real answer.
+    uploadAPI.getGnnStatus()
+      .then(r => { setGnnAvailable(!!r.data.available); setGnnReason(r.data.reason || null) })
+      .catch(() => { setGnnAvailable(false); setGnnReason('engine_offline') })
   }, [])
 
   useEffect(() => {
@@ -221,7 +223,9 @@ export default function UploadPage() {
               ? 'Checking availability…'
               : gnnAvailable
                 ? 'Builds a transaction graph from this file and adds a GNN fraud probability per transaction (optional extra, batch network analysis), alongside the Autoencoder / XGBoost / Isolation Forest scores.'
-                : 'Not installed on the AI Engine — see Admin → AI Models → GNN, or SETUP_GUIDE.md, to enable it.'}
+                : gnnReason === 'engine_offline'
+                  ? 'The AI Engine is offline or unreachable — start it (cd ai-engine, uvicorn main:app --port 8000) and refresh this page.'
+                  : 'Not installed on the AI Engine — see Admin → AI Models → GNN, or SETUP_GUIDE.md, to enable it.'}
           </span>
         </label>
       </div>

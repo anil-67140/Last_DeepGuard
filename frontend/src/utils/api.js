@@ -59,6 +59,7 @@ export const uploadAPI = {
     headers: { 'Content-Type': 'multipart/form-data' },
     onUploadProgress: e => onProgress?.(Math.round(e.loaded / e.total * 100))
   }),
+  getGnnStatus: () => api.get('/upload/gnn-status'),   // any logged-in user (admin one is /admin/gnn/status)
   getJobs:      () => api.get('/upload/jobs'),
   getJobStatus: (jobId) => api.get(`/upload/jobs/${jobId}`),
 }
