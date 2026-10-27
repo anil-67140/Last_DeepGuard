@@ -30,8 +30,25 @@ api.interceptors.response.use(
   }
 )
 
+// Fetch the user's real role (stored in the Supabase `profiles` table, read by the backend).
+// Takes the access token explicitly and uses plain axios on purpose: it is called from inside
+// supabase.auth.onAuthStateChange, where calling supabase.auth.getSession() (what the `api`
+// interceptor does) can deadlock. Returns null if the backend can't be reached.
+export async function fetchRole(accessToken) {
+  try {
+    const { data } = await axios.get(
+      `${import.meta.env.VITE_API_URL || 'http://localhost:4000/api'}/auth/me`,
+      { headers: { Authorization: `Bearer ${accessToken}` }, timeout: 10000 }
+    )
+    return data.role || null
+  } catch {
+    return null
+  }
+}
+
 // ── API Methods ──
 export const authAPI = {
+  me:       () => api.get('/auth/me'),
   login:    (email, password) => api.post('/auth/login', { email, password }),
   register: (email, password, role) => api.post('/auth/register', { email, password, role }),
   logout:   () => api.post('/auth/logout'),

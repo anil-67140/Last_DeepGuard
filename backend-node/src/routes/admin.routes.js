@@ -1,6 +1,9 @@
 const router = require('express').Router();
 const axios = require('axios');
-const { authenticate, requireAdmin, supabase } = require('../middleware/auth.middleware');
+const {
+  authenticate, requireAdmin, supabase,
+  upsertProfile, invalidateRoleCache, VALID_ROLES,
+} = require('../middleware/auth.middleware');
 const Job = require('../models/Job.model');
 const Transaction = require('../models/Transaction.model');
 
@@ -39,12 +42,22 @@ router.get('/stats', authenticate, requireAdmin, async (req, res) => {
 // List all users
 router.get('/users', authenticate, requireAdmin, async (req, res) => {
   try {
-    const { data, error } = await supabase.auth.admin.listUsers();
-    if (error) return res.status(500).json({ error: error.message });
-    const users = data.users.map(u => ({
+    // Roles come from the public.profiles table; sign-in/confirmation info from Supabase Auth.
+    const [authRes, profRes] = await Promise.all([
+      supabase.auth.admin.listUsers({ page: 1, perPage: 1000 }),
+      supabase.from('profiles').select('id, role'),
+    ]);
+    if (authRes.error) return res.status(500).json({ error: authRes.error.message });
+    if (profRes.error) {
+      return res.status(500).json({
+        error: `profiles table not available (${profRes.error.message}). Run supabase/001_profiles.sql in the Supabase SQL Editor.`
+      });
+    }
+    const roleById = new Map(profRes.data.map(p => [p.id, p.role]));
+    const users = authRes.data.users.map(u => ({
       id: u.id,
       email: u.email,
-      role: u.user_metadata?.role || 'auditor',
+      role: roleById.get(u.id) || 'auditor',
       createdAt: u.created_at,
       lastSignInAt: u.last_sign_in_at,
       confirmed: !!u.email_confirmed_at
@@ -66,7 +79,7 @@ router.post('/users', authenticate, requireAdmin, async (req, res) => {
     if (password.length < 6) {
       return res.status(400).json({ error: 'password must be at least 6 characters' });
     }
-    if (!['admin', 'auditor', 'analyst'].includes(role)) {
+    if (!VALID_ROLES.includes(role)) {
       return res.status(400).json({ error: 'role must be admin, auditor, or analyst' });
     }
 
@@ -78,6 +91,15 @@ router.post('/users', authenticate, requireAdmin, async (req, res) => {
     });
 
     if (error) return res.status(400).json({ error: error.message });
+
+    // Save the user + chosen role in the profiles table.
+    try {
+      await upsertProfile({ id: data.user.id, email: data.user.email, role });
+    } catch (e) {
+      return res.status(500).json({
+        error: `User was created in Supabase Auth but saving the profile failed: ${e.message}. Run supabase/001_profiles.sql.`
+      });
+    }
 
     res.status(201).json({
       id: data.user.id,
@@ -95,14 +117,21 @@ router.patch('/users/:userId/role', authenticate, requireAdmin, async (req, res)
   try {
     const { userId } = req.params;
     const { role } = req.body;
-    if (!['admin', 'auditor', 'analyst'].includes(role)) {
+    if (!VALID_ROLES.includes(role)) {
       return res.status(400).json({ error: 'role must be admin, auditor, or analyst' });
     }
-    const { data, error } = await supabase.auth.admin.updateUserById(userId, {
-      user_metadata: { role }
-    });
-    if (error) return res.status(500).json({ error: error.message });
-    res.json({ id: data.user.id, email: data.user.email, role });
+    // Source of truth: the profiles table.
+    const { data: target, error: getErr } = await supabase.auth.admin.getUserById(userId);
+    if (getErr || !target?.user) return res.status(404).json({ error: 'User not found' });
+    try {
+      await upsertProfile({ id: userId, email: target.user.email, role });
+    } catch (e) {
+      return res.status(500).json({ error: `Could not save role: ${e.message}` });
+    }
+    // Keep user_metadata in sync for display only — it is never used for permissions.
+    await supabase.auth.admin.updateUserById(userId, { user_metadata: { role } }).catch(() => {});
+    invalidateRoleCache(userId);
+    res.json({ id: userId, email: target.user.email, role });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -115,8 +144,9 @@ router.delete('/users/:userId', authenticate, requireAdmin, async (req, res) => 
     if (userId === req.userId) {
       return res.status(400).json({ error: 'Cannot delete your own account' });
     }
-    const { error } = await supabase.auth.admin.deleteUser(userId);
+    const { error } = await supabase.auth.admin.deleteUser(userId); // profile row is removed by ON DELETE CASCADE
     if (error) return res.status(500).json({ error: error.message });
+    invalidateRoleCache(userId);
     res.json({ message: 'User removed' });
   } catch (err) {
     res.status(500).json({ error: err.message });

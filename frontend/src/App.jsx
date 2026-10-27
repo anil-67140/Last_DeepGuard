@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { useDispatch, useSelector } from 'react-redux'
-import { supabase } from './utils/api'
+import { supabase, fetchRole } from './utils/api'
 import { setUser, clearUser } from './store'
 
 import LoginPage      from './pages/LoginPage'
@@ -27,14 +27,19 @@ export default function App() {
 
   useEffect(() => {
     // Restore session on mount
+    const applySession = async (session) => {
+      const role = await fetchRole(session.access_token) // role from the profiles table
+      dispatch(setUser({ user: session.user, session, role }))
+    }
+
     supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) dispatch(setUser({ user: session.user, session }))
+      if (session?.user) applySession(session)
     })
 
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_IN' && session) {
-        dispatch(setUser({ user: session.user, session }))
+        setTimeout(() => applySession(session), 0) // don't await Supabase/network calls inside this callback
       } else if (event === 'SIGNED_OUT') {
         dispatch(clearUser())
         navigate('/login')

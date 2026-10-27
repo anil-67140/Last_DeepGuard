@@ -1,10 +1,10 @@
-import { useState } from 'react'
-import { useDispatch } from 'react-redux'
+import { useState, useEffect } from 'react'
+import { useDispatch, useSelector } from 'react-redux'
 import { useNavigate } from 'react-router-dom'
-import { supabase } from '../utils/api'
+import { supabase, fetchRole } from '../utils/api'
 import { setUser } from '../store'
 import toast from 'react-hot-toast'
-import { Shield, Eye, EyeOff, Loader2 } from 'lucide-react'
+import { Shield, Eye, EyeOff, Loader2, MailCheck } from 'lucide-react'
 
 export default function LoginPage() {
   const [email, setEmail]       = useState('')
@@ -12,8 +12,15 @@ export default function LoginPage() {
   const [showPass, setShowPass] = useState(false)
   const [loading, setLoading]   = useState(false)
   const [isRegister, setIsRegister] = useState(false)
+  const [confirmEmail, setConfirmEmail] = useState(null) // set after sign-up -> shows the "check your email" screen
+  const authUser = useSelector(s => s.auth.user)
   const dispatch = useDispatch()
   const navigate = useNavigate()
+
+  // Already signed in (e.g. just came back from the email-confirmation link) -> go to the dashboard.
+  useEffect(() => {
+    if (authUser) navigate('/dashboard', { replace: true })
+  }, [authUser])
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -21,16 +28,31 @@ export default function LoginPage() {
     setLoading(true)
     try {
       if (isRegister) {
+        // No role is sent: new accounts are always 'auditor'. The database trigger creates the
+        // row in the `profiles` table; admins are promoted only by an existing admin.
         const { data, error } = await supabase.auth.signUp({
           email, password,
-          options: { data: { role: 'auditor' } }
+          // Where the link in the confirmation email sends the user back to (must be allowed in
+          // Supabase -> Authentication -> URL Configuration -> Redirect URLs).
+          options: { emailRedirectTo: `${window.location.origin}/login` },
         })
         if (error) throw error
-        toast.success('Account created! Check your email to confirm.')
+        if (data.user && data.user.identities?.length === 0) {
+          throw new Error('This email is already registered')
+        }
+        if (data.session) {
+          // Email confirmation is switched OFF in Supabase: the user is already signed in.
+          toast.success('Account created!')
+        } else {
+          setConfirmEmail(email)   // show the "check your email" screen
+          setPassword('')
+          setIsRegister(false)
+        }
       } else {
         const { data, error } = await supabase.auth.signInWithPassword({ email, password })
         if (error) throw error
-        dispatch(setUser({ user: data.user, session: data.session }))
+        const role = await fetchRole(data.session.access_token)
+        dispatch(setUser({ user: data.user, session: data.session, role }))
         toast.success('Welcome back!')
         navigate('/dashboard')
       }
@@ -52,7 +74,8 @@ export default function LoginPage() {
     try {
       const { data, error } = await supabase.auth.signInWithPassword({ email: e, password: p })
       if (error) throw error
-      dispatch(setUser({ user: data.user, session: data.session }))
+      const realRole = await fetchRole(data.session.access_token)
+      dispatch(setUser({ user: data.user, session: data.session, role: realRole }))
       navigate('/dashboard')
     } catch {
       // Demo mode — set mock user
@@ -118,6 +141,20 @@ export default function LoginPage() {
             <Shield className="w-6 h-6 text-sky-400" />
             <span className="font-bold text-white">DeepGuard</span>
           </div>
+
+          {confirmEmail && (
+            <div className="mb-6 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4">
+              <div className="flex items-center gap-2 text-emerald-400 font-semibold text-sm mb-1">
+                <MailCheck className="w-4 h-4" /> Check your email
+              </div>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                We sent a confirmation link to <span className="text-white font-medium">{confirmEmail}</span>.
+                Click it, then sign in below. (Check your spam folder if you don't see it.)
+              </p>
+              <button type="button" onClick={() => setConfirmEmail(null)}
+                className="mt-2 text-xs text-slate-400 hover:text-slate-200">Dismiss</button>
+            </div>
+          )}
 
           <h2 className="text-2xl font-bold text-white mb-1">
             {isRegister ? 'Create account' : 'Sign in'}

@@ -5,7 +5,13 @@ const authSlice = createSlice({
   name: 'auth',
   initialState: { user: null, session: null, role: 'auditor', loading: false },
   reducers: {
-    setUser:    (state, { payload }) => { state.user = payload.user; state.session = payload.session; state.role = payload.user?.user_metadata?.role || 'auditor'; },
+    setUser: (state, { payload }) => {
+      state.user = payload.user;
+      state.session = payload.session;
+      // role comes from the backend (profiles table). user_metadata is only used for the local demo mock user.
+      const isDemo = String(payload.user?.id || '').startsWith('demo-');
+      state.role = payload.role || (isDemo ? payload.user?.user_metadata?.role : null) || 'auditor';
+    },
     clearUser:  (state) => { state.user = null; state.session = null; state.role = 'auditor'; },
     setLoading: (state, { payload }) => { state.loading = payload; },
   }
