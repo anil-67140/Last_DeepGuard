@@ -5,6 +5,7 @@ const fs = require("fs");
 const path = require("path");
 const { v4: uuidv4 } = require("uuid");
 const axios = require("axios");
+const http = require("http");
 const Transaction = require("../models/Transaction.model");
 const Job = require("../models/Job.model");
 const { createUploadQueue } = require("../queue/uploadQueue");
@@ -17,6 +18,17 @@ const AI_ENGINE_URL = process.env.AI_ENGINE_URL || "http://127.0.0.1:8000";
 // Send to the AI engine in chunks. The v2 models use each account's PAST activity as features; the engine keeps a rolling
 // per-job history, so chunks must be sent in TIME ORDER with the same jobId (done below). Larger chunks = fewer round trips.
 const BATCH_SIZE = 20000;
+
+// Dedicated axios client for the AI Engine with HTTP keep-alive DISABLED.
+// WHY: between batches this process does heavy synchronous work (building 20k documents + Mongo insertMany), which blocks
+// the event loop. uvicorn closes idle keep-alive connections after ~5 s, but while the loop is blocked Node cannot notice
+// the closed socket, so the next batch is written to a dead connection -> "read ECONNRESET" / "socket hang up".
+// This only shows up on multi-batch (large) files. A fresh connection per batch avoids it.
+const aiClient = axios.create({
+  baseURL: AI_ENGINE_URL,
+  httpAgent: new http.Agent({ keepAlive: false }),
+  timeout: 300000, // 5 min timeout for large batches
+});
 
 // Multer storage
 const storage = multer.diskStorage({
@@ -184,15 +196,11 @@ function parseXLSX(filePath) {
  * the engine if the GNN isn't installed/loaded — see GET /models/gnn/status).
  */
 async function sendToAIEngine(transactions, jobId, useGnn = false) {
-  const response = await axios.post(
-    `${AI_ENGINE_URL}/analyze/batch`,
-    {
-      transactions,
-      job_id: jobId,
-      use_gnn: !!useGnn,
-    },
-    { timeout: 300000 },
-  ); // 5 min timeout for large batches
+  const response = await aiClient.post("/analyze/batch", {
+    transactions,
+    job_id: jobId,
+    use_gnn: !!useGnn,
+  });
   return response.data;
 }
 
