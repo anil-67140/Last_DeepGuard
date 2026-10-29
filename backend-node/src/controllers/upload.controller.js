@@ -19,6 +19,10 @@ const AI_ENGINE_URL = process.env.AI_ENGINE_URL || "http://127.0.0.1:8000";
 // per-job history, so chunks must be sent in TIME ORDER with the same jobId (done below). Larger chunks = fewer round trips.
 const BATCH_SIZE = 20000;
 
+// Shared history: every signed-in user can see the analyses done so far (the analysis / graph / report routes
+// already work that way). Set SHARED_HISTORY=false in .env to restrict jobs to the account that uploaded them.
+const SHARED_HISTORY = process.env.SHARED_HISTORY !== "false";
+
 // Dedicated axios client for the AI Engine with HTTP keep-alive DISABLED.
 // WHY: between batches this process does heavy synchronous work (building 20k documents + Mongo insertMany), which blocks
 // the event loop. uvicorn closes idle keep-alive connections after ~5 s, but while the loop is blocked Node cannot notice
@@ -347,6 +351,7 @@ async function processUploadJob({ jobId, filePath, ext, userEmail, useGnn }) {
           gnnScore: result.gnn_score ?? null,
           fraudCategory: result.fraud_category,
           shapValues: result.shap_values || {},
+          shapSigned: result.shap_signed || {},
           graphLinks: tx.to_account ? [tx.to_account] : [],
           createdAt: new Date(), // lean insert skips schema defaults, so it is set here
         };
@@ -557,7 +562,11 @@ const uploadFile = async (req, res) => {
 const getJobStatus = async (req, res) => {
   try {
     const { jobId } = req.params;
-    const job = await Job.findOne({ jobId, userId: req.userId });
+    // Previously restricted to the uploader, so older jobs (uploaded under another account) 404'd and the
+    // Analysis page fell back to demo data when opened from the Dashboard.
+    const job = await Job.findOne(
+      SHARED_HISTORY ? { jobId } : { jobId, userId: req.userId },
+    );
     if (!job) return res.status(404).json({ error: "Job not found" });
     res.json(job);
   } catch (err) {

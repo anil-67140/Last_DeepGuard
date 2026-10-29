@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { analysisAPI, uploadAPI, reportAPI } from "../utils/api";
+import { analysisAPI, uploadAPI, reportAPI, dashboardAPI } from "../utils/api";
+import TxExplainPanel from "../components/viz/TxExplainPanel";
+import { LEVEL_COLORS } from "../components/viz/riskBands";
 import toast from "react-hot-toast";
-import { ShapBars } from "../components/ExplainPanel";
 import {
   Search,
   Filter,
@@ -16,6 +17,10 @@ import {
   X,
   FileDown,
   ShieldCheck,
+  Activity,
+  Flame,
+  Gauge as GaugeIcon,
+  Network,
 } from "lucide-react";
 
 const RISK_COLORS = {
@@ -25,48 +30,28 @@ const RISK_COLORS = {
   Low: "#22c55e",
 };
 
-function RiskGauge({ score }) {
-  const r = 40,
-    circ = 2 * Math.PI * r;
-  const pct = Math.min(score, 100) / 100;
-  const color =
-    score >= 75
-      ? "#ef4444"
-      : score >= 55
-        ? "#f59e0b"
-        : score >= 35
-          ? "#3b82f6"
-          : "#22c55e";
+function StatTile({ icon: Icon, label, value, sub, color, bar }) {
   return (
-    <div className="relative inline-flex items-center justify-center">
-      <svg width="96" height="96" viewBox="0 0 96 96">
-        <circle
-          cx="48"
-          cy="48"
-          r={r}
-          fill="none"
-          stroke="#1e293b"
-          strokeWidth="8"
-        />
-        <circle
-          cx="48"
-          cy="48"
-          r={r}
-          fill="none"
-          stroke={color}
-          strokeWidth="8"
-          strokeDasharray={`${circ * pct} ${circ * (1 - pct)}`}
-          strokeDashoffset={circ / 4}
-          strokeLinecap="round"
-          style={{ transition: "stroke-dasharray 1s ease" }}
-        />
-      </svg>
-      <div className="absolute text-center">
-        <span className="text-xl font-bold text-white">
-          {score?.toFixed(0)}
-        </span>
-        <span className="text-xs text-slate-400 block -mt-1">/ 100</span>
+    <div className="rounded-xl border border-slate-700/60 bg-slate-800/40 px-4 py-3 min-w-0 fade-up">
+      <div className="flex items-center gap-2 mb-1">
+        <Icon className="w-3.5 h-3.5" style={{ color }} />
+        <span className="eyebrow">{label}</span>
       </div>
+      <p className="text-xl font-bold text-white tabular-nums leading-tight">
+        {value}
+      </p>
+      {bar != null ? (
+        <div className="h-1 rounded-full bg-slate-700 mt-2 overflow-hidden">
+          <div
+            className="h-full rounded-full grow-right"
+            style={{ width: `${Math.min(100, bar)}%`, background: color }}
+          />
+        </div>
+      ) : (
+        sub && (
+          <p className="text-[11px] text-slate-500 mt-0.5 truncate">{sub}</p>
+        )
+      )}
     </div>
   );
 }
@@ -83,12 +68,20 @@ export default function AnalysisPage() {
   const [loading, setLoading] = useState(true);
   const [selectedTx, setSelectedTx] = useState(null);
   const [generatingReport, setGeneratingReport] = useState(false);
+  const [threshold, setThreshold] = useState(null); // alert threshold (0-1) from the AI engine — for the gauge marker
+  const [demoData, setDemoData] = useState(false); // true when the API was unreachable and sample data is shown
 
   const LIMIT = 50;
 
   useEffect(() => {
     loadJob();
   }, [jobId]);
+  useEffect(() => {
+    dashboardAPI
+      .getPerformance()
+      .then((r) => setThreshold(r.data?.ensembleThreshold ?? null))
+      .catch(() => {});
+  }, []);
   useEffect(() => {
     loadTransactions();
   }, [jobId, page, filter, search]);
@@ -99,6 +92,7 @@ export default function AnalysisPage() {
       setJob(res.data);
     } catch {
       setJob(MOCK_JOB);
+      setDemoData(true);
     }
   };
 
@@ -116,6 +110,7 @@ export default function AnalysisPage() {
     } catch {
       setTransactions(MOCK_TRANSACTIONS);
       setTotal(MOCK_TRANSACTIONS.length);
+      setDemoData(true);
     } finally {
       setLoading(false);
     }
@@ -311,6 +306,63 @@ export default function AnalysisPage() {
           </div>
         )}
 
+        {demoData && (
+          <div className="mx-5 mt-3 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-xs text-amber-300 flex items-center gap-2">
+            <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+            Backend unreachable — showing randomly generated sample data, not
+            real analysis results.
+          </div>
+        )}
+
+        {/* Job summary */}
+        <div
+          className={`px-5 pt-4 grid grid-cols-2 gap-3 ${selectedTx ? "md:grid-cols-3" : "md:grid-cols-5"}`}
+        >
+          <StatTile
+            icon={Activity}
+            label="Transactions"
+            color="#38bdf8"
+            value={(j.totalTransactions || 0).toLocaleString()}
+            sub={
+              j.processingTimeMs
+                ? `analysed in ${(j.processingTimeMs / 1000).toFixed(1)}s`
+                : null
+            }
+          />
+          <StatTile
+            icon={Flame}
+            label="Flagged"
+            color="#f59e0b"
+            value={(j.flaggedCount || 0).toLocaleString()}
+            sub={`${(((j.flaggedCount || 0) / (j.totalTransactions || 1)) * 100).toFixed(2)}% of file`}
+          />
+          <StatTile
+            icon={AlertTriangle}
+            label="Critical"
+            color="#ef4444"
+            value={(j.criticalCount || 0).toLocaleString()}
+            sub={
+              j.flaggedCount
+                ? `${(((j.criticalCount || 0) / j.flaggedCount) * 100).toFixed(0)}% of flagged`
+                : "—"
+            }
+          />
+          <StatTile
+            icon={GaugeIcon}
+            label="Average risk"
+            color="#a78bfa"
+            value={`${(j.averageRiskScore || 0).toFixed(1)}`}
+            bar={j.averageRiskScore || 0}
+          />
+          <StatTile
+            icon={Network}
+            label="Graph model"
+            color="#e879f9"
+            value={j.usedGnn ? "On" : "Off"}
+            sub={j.usedGnn ? "GNN scores included" : "not used for this file"}
+          />
+        </div>
+
         {/* Filters */}
         <div className="px-5 py-3 border-b border-slate-800 flex items-center gap-3">
           <div className="relative flex-1 max-w-sm">
@@ -342,7 +394,7 @@ export default function AnalysisPage() {
           </span>
         </div>
 
-        {/* Table */}
+        {/* Table — click a row to see WHY it was scored that way */}
         <div className="flex-1 overflow-auto">
           {loading ? (
             <div className="flex items-center justify-center h-40">
@@ -422,7 +474,14 @@ export default function AnalysisPage() {
                       </div>
                     </td>
                     <td className="px-4 py-2.5">
-                      <span className={riskLevelClass(tx.riskLevel)}>
+                      <span
+                        className="inline-flex items-center gap-1.5 text-[11px] font-semibold"
+                        style={{ color: LEVEL_COLORS[tx.riskLevel] }}
+                      >
+                        <i
+                          className="w-1.5 h-1.5 rounded-full"
+                          style={{ background: LEVEL_COLORS[tx.riskLevel] }}
+                        />
                         {tx.riskLevel}
                       </span>
                     </td>
@@ -472,138 +531,16 @@ export default function AnalysisPage() {
         </div>
       </div>
 
-      {/* ── Detail Panel ── */}
+      {/* ── Explainability panel ── */}
       {selectedTx && (
-        <div className="w-80 flex-shrink-0 border-l border-slate-800 bg-slate-900 overflow-y-auto">
-          <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-white">
-              Transaction Detail
-            </h3>
-            <button
-              onClick={() => setSelectedTx(null)}
-              className="text-slate-400 hover:text-white"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-
-          <div className="p-4 space-y-5">
-            {/* Risk Gauge */}
-            <div className="text-center">
-              <RiskGauge score={selectedTx.riskScore} />
-              <span
-                className={`mt-2 inline-block ${riskLevelClass(selectedTx.riskLevel)}`}
-              >
-                {selectedTx.riskLevel} Risk
-              </span>
-              <p className="text-xs text-slate-400 mt-1">
-                {selectedTx.fraudCategory}
-              </p>
-            </div>
-
-            {/* Transaction Fields */}
-            <div className="space-y-2">
-              {[
-                {
-                  label: "Transaction ID",
-                  value: selectedTx.transactionId,
-                  mono: true,
-                },
-                {
-                  label: "Sender Account",
-                  value: selectedTx.account || "—",
-                  mono: true,
-                },
-                {
-                  label: "Receiver Account",
-                  value: selectedTx.toAccount || "—",
-                  mono: true,
-                },
-                {
-                  label: "Amount Paid",
-                  value: `$${(selectedTx.amountPaid || 0).toLocaleString()}`,
-                },
-                {
-                  label: "Payment Format",
-                  value: selectedTx.paymentFormat || "—",
-                },
-                {
-                  label: "Currency",
-                  value: `${selectedTx.paymentCurrency || "?"} → ${selectedTx.receivingCurrency || "?"}`,
-                },
-              ].map(({ label, value, mono }) => (
-                <div key={label} className="flex justify-between gap-2">
-                  <span className="text-xs text-slate-400 flex-shrink-0">
-                    {label}
-                  </span>
-                  <span
-                    className={`text-xs font-medium text-slate-200 text-right truncate ${mono ? "font-mono" : ""}`}
-                  >
-                    {value}
-                  </span>
-                </div>
-              ))}
-            </div>
-
-            {/* Model Scores */}
-            <div>
-              <p className="text-xs text-slate-400 font-semibold uppercase mb-2">
-                Model Scores
-              </p>
-              <div className="space-y-1.5">
-                <div className="flex justify-between text-xs">
-                  <span className="text-slate-400">
-                    Isolation Forest (anomaly signal)
-                  </span>
-                  <span className="text-sky-400 font-bold">
-                    {selectedTx.isolationForestScore?.toFixed(1)}/100
-                  </span>
-                </div>
-                <div className="flex justify-between text-xs">
-                  <span className="text-slate-400">
-                    Autoencoder (anomaly signal)
-                  </span>
-                  <span className="text-purple-400 font-bold">
-                    {selectedTx.autoencoderScore?.toFixed(1)}/100
-                  </span>
-                </div>
-                <div className="flex justify-between text-xs border-t border-slate-700 pt-1.5 mt-1.5">
-                  <span className="text-slate-300 font-semibold">
-                    Risk Score (XGBoost + AE model)
-                  </span>
-                  <span className="text-white font-bold">
-                    {selectedTx.riskScore?.toFixed(1)}/100
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* SHAP Explanations */}
-            {selectedTx.shapValues &&
-              Object.keys(selectedTx.shapValues).length > 0 && (
-                <div>
-                  <p className="text-sm font-semibold text-slate-100 mb-0.5">
-                    Signals that mattered most
-                  </p>
-                  <p className="text-xs text-slate-400 mb-3">
-                    Why this transaction scored the way it did.
-                  </p>
-                  <ShapBars shap={selectedTx.shapValues} />
-                </div>
-              )}
-
-            {/* Graph Button */}
-            <button
-              onClick={() =>
-                navigate(`/graph/${selectedTx.transactionId}?jobId=${jobId}`)
-              }
-              className="btn-secondary w-full flex items-center justify-center gap-2 text-xs"
-            >
-              <GitBranch className="w-3.5 h-3.5" />
-              Trace Network Graph
-            </button>
-          </div>
-        </div>
+        <TxExplainPanel
+          tx={selectedTx}
+          threshold={threshold}
+          onClose={() => setSelectedTx(null)}
+          onTrace={() =>
+            navigate(`/graph/${selectedTx.transactionId}?jobId=${jobId}`)
+          }
+        />
       )}
     </div>
   );
@@ -643,11 +580,19 @@ const MOCK_TRANSACTIONS = Array.from({ length: 20 }, (_, i) => ({
     "Clean",
   ][Math.floor(Math.random() * 4)],
   shapValues: {
-    "Amount Paid": 0.38,
-    Amount_Ratio: 0.22,
-    Log_Amount_Paid: 0.16,
-    "Payment Format_enc": 0.12,
+    S_out_cnt_24h: 0.38,
+    Log_Amount_Paid: 0.22,
+    S_passthru: 0.16,
+    Payment_Format_enc: 0.12,
     Hour: 0.07,
     DayOfWeek: 0.05,
+  },
+  shapSigned: {
+    S_out_cnt_24h: 1.4,
+    Log_Amount_Paid: 0.8,
+    S_passthru: 0.5,
+    Payment_Format_enc: 0.3,
+    Hour: -0.3,
+    DayOfWeek: -0.1,
   },
 }));

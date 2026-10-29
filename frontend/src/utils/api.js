@@ -66,6 +66,8 @@ export const uploadAPI = {
     }),
   getJobs: () => api.get("/upload/jobs"),
   getJobStatus: (jobId) => api.get(`/upload/jobs/${jobId}`),
+  // Is the GNN option usable? Open to every logged-in user (the admin-only /admin/gnn/status gave auditors a 403).
+  getGnnStatus: () => api.get("/upload/gnn-status"),
 };
 
 export const analysisAPI = {
